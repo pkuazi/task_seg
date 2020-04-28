@@ -1,28 +1,110 @@
 import numpy as np
 import os, sys
 
-from osgeo import gdal
+from osgeo import gdal,ogr,osr
 from skimage import exposure
 from skimage.segmentation import felzenszwalb
 
 import json
 import gjsonc
 
-
-#RASTER_DATA_PATH = "/mnt/win/data/image/GF1/GF1_PMS1_E116.1_N40.0_20151012_L1A0001094174/"
-RASTER_DATA_PATH = "/root"
-#image="GF1_PMS1_E116.1_N40.0_20151012_L1A0001094174-MSS1.tiff"
-image="GF1_PMS1_E116.1_N40.0.tif"
-imge_path=os.path.join(RASTER_DATA_PATH,image)
-seg_path="/tmp/seg/"
-
 #BLOCK_SIZE=256
 #OVERLAP_SIZE=13
 BLOCK_SIZE=512
 OVERLAP_SIZE=25
-cluster_num=64
+cluster_num=20
 
-def obia(band1,band2,band3, dst_file,proj, gt):
+seg_path="/tmp/seg/"
+if not os.path.exists(seg_path):
+    os.makedirs(seg_path)
+json_path='/tmp/json'
+if not os.path.exists(json_path):
+    os.makedirs(json_path)
+encode_dir='/tmp/encode'
+if not os.path.exists(encode_dir):
+    os.makedirs(encode_dir)
+
+def encode_json(t):
+#     f=open(geojson_file)
+#     t = json.loads(f.read())
+    num_geom=len(t['features'])
+    for i in range(num_geom):
+        print(i)
+        geom = t['features'][i]['geometry']
+        geojs=gjsonc.trunc_geojson(geom,4)
+        jstr = gjsonc.encode_geojson(geojs)
+        t['features'][i]['geometry']=jstr
+#         ruku(t['features'][i])
+    return t     
+
+
+def polygonize(src_filename,dst_filename):
+    dst_layername = 'out'
+    src_ds = gdal.Open( src_filename )
+    if src_ds is None:
+        print('Unable to open %s' % src_filename)
+        sys.exit(1)
+    srcband = src_ds.GetRasterBand(1)
+    maskband = srcband.GetMaskBand()
+    try:
+        gdal.PushErrorHandler( 'QuietErrorHandler' )
+        dst_ds = ogr.Open( dst_filename, update=1 )
+        gdal.PopErrorHandler()
+    except:
+        dst_ds = None
+  # =============================================================================
+  #     Create output file.
+  # =============================================================================
+    if dst_ds is None:
+        drv = ogr.GetDriverByName("GEOJSON")
+
+    dst_ds = drv.CreateDataSource( dst_filename )
+
+ # =============================================================================
+#       Find or create destination layer.
+ # =============================================================================
+    try:
+        dst_layer = dst_ds.GetLayerByName(dst_layername)
+    except:
+        dst_layer = None
+
+    if dst_layer is None:
+        srs = None
+        if src_ds.GetProjectionRef() != '':
+            srs = osr.SpatialReference()
+            srs.ImportFromWkt( src_ds.GetProjectionRef() )
+              
+        dst_layer = dst_ds.CreateLayer(dst_layername, srs = srs )
+             
+        
+        dst_fieldname = 'DN'
+          
+        fd = ogr.FieldDefn(dst_fieldname, ogr.OFTInteger)
+        dst_layer.CreateField(fd)
+        dst_field = 0
+    else:
+        if dst_fieldname is not None:
+            dst_field = dst_layer.GetLayerDefn().GetFieldIndex(dst_fieldname)
+            if dst_field < 0:
+                print("Warning: cannot find field '%s' in layer '%s'" % (dst_fieldname, dst_layername))
+
+
+# =============================================================================
+  #    Invoke algorithm.
+ # =============================================================================
+
+    prog_func = gdal.TermProgress
+    
+    result = gdal.Polygonize(srcband, maskband, dst_layer, dst_field, callback=prog_func)
+    
+    srcband = None
+    src_ds = None
+    dst_ds = None
+    
+    return dst_filename
+        
+
+def obia(band1,band2,band3, dst_file,proj, gt,jsonfile):
 
     bands_data = []
     bands_data.append(band1)
@@ -31,7 +113,8 @@ def obia(band1,band2,band3, dst_file,proj, gt):
 
     bands_data = np.dstack(b for b in bands_data)
     if bands_data.min()==bands_data.max():
-        print("The image %s do not need to segment"%(image))
+        print("The image do not need to segment")
+        return None
     else:
         img = exposure.rescale_intensity(bands_data)
         rgb_img = np.dstack([img[:, :, 2], img[:, :, 1], img[:, :, 0]])
@@ -71,38 +154,25 @@ def obia(band1,band2,band3, dst_file,proj, gt):
         dst_ds.SetGeoTransform(gt)
         dst_ds.SetProjection(proj)
         dst_ds.GetRasterBand(1).WriteArray(segments)
-    return dst_file
-
-def ruku(record):
-
-def encode_json(geojson_file):
-    f=open(geojson_file)
-    t = json.loads(f.read())
-    num_geom=len(t['features'])
-    for i in range(num_geom):
-        print(i)
-        geom = t['features'][i]['geometry']
-        geojs=gjsonc.trunc_geojson(geom,4)
-        jstr = gjsonc.encode_geojson(geojs)
-        t['features'][i]['geometry']=jstr
-		ruku(t['features'][i])
-        
-    dir_file=os.path.join(encode_dir, files[n])
-    # print(dir_file)    
-    # with open(dir_file, 'w') as outfile:
-        # json.dump(t, outfile)
+        dst_ds=None
+ 
+        vector_file = polygonize(dst_file,jsonfile)
+#             cmd='gdal_polygonize.py %s -f GEOJSON  %s' % (dst_file,jsonfile)
+#             os.system(cmd)
+        return vector_file
+    
 
 def seg_raster(band1_file,band2_file,band3_file,imageid,seg_path):
     dataset1=gdal.Open(band1_file)
-    if dataset is None:
+    if dataset1 is None:
         print("Failed to open file: " + band1_file)
         sys.exit(1)
-    dataset1=gdal.Open(band2_file)
-    if dataset is None:
+    dataset2=gdal.Open(band2_file)
+    if dataset2 is None:
         print("Failed to open file: " + band2_file)
         sys.exit(1)
-    dataset1=gdal.Open(band3_file)
-    if dataset is None:
+    dataset3=gdal.Open(band3_file)
+    if dataset3 is None:
         print("Failed to open file: " + band3_file)
         sys.exit(1)
     band = dataset1.GetRasterBand(1)
@@ -130,8 +200,7 @@ def seg_raster(band1_file,band2_file,band3_file,imageid,seg_path):
             xoff=0+(BLOCK_SIZE-OVERLAP_SIZE)*j
             yoff=0+(BLOCK_SIZE-OVERLAP_SIZE)*i
             print("the row and column of tile is :", xoff, yoff)
-            tile=dataset.ReadAsArray(xoff, yoff, BLOCK_SIZE,BLOCK_SIZE)
-            print(tile.shape)
+
             band1=dataset1.ReadAsArray(xoff, yoff, BLOCK_SIZE,BLOCK_SIZE)
             band2=dataset2.ReadAsArray(xoff, yoff, BLOCK_SIZE,BLOCK_SIZE)
             band3=dataset3.ReadAsArray(xoff, yoff, BLOCK_SIZE,BLOCK_SIZE)
@@ -150,14 +219,19 @@ def seg_raster(band1_file,band2_file,band3_file,imageid,seg_path):
             miny_list.append(gt[3]+BLOCK_SIZE*geotrans[5])
         
             print("start segmenting...")
-            dst_file=obia(band1,band2,band3,dst_file,proj, gt)
-            
-            
             jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')
-            cmd='gdal_polygonize.py %s -f GEOJSON  %s' % (dst_file,jsonfile)
-            os.system(cmd)
+            json_file = obia(band1,band2,band3,dst_file,proj, gt,jsonfile)
             
-            encode_json(jsonfile)
+            if json_file is None:
+                continue
+            else:
+                f=open(json_file)
+                geojson = json.loads(f.read())
+                encode_gj= encode_json(geojson)
+                dir_file=os.path.join(encode_dir, imageid+str(i)+'_'+str(j)+'.geojson')
+                print(dir_file)    
+                with open(dir_file, 'w') as outfile:
+                    json.dump(encode_gj, outfile)
             
     bb = {}
     bb["subtaskname"]=subtask_list
@@ -165,19 +239,19 @@ def seg_raster(band1_file,band2_file,band3_file,imageid,seg_path):
     bb["maxy"]=maxy_list
     bb["maxx"]=maxx_list
     bb["miny"]=miny_list      
-    #存储到pandas的dataframe中（numpy的array不能存储不同类型，如字符串和数字）
+
     df=pd.DataFrame(bb)
-    df.to_csv('subtask_bbox.csv')
+    df.to_csv('/tmp/subtask_bbox.csv')
 
 if __name__ == '__main__':
-    print('start')
-    print('the image is :', rasterfile)
-    RASTER_DATA_PATH='/mnt/win/data/BEIJING/bj_l8/L8-OLI-123-032-20180408-LSR'
+    print('start')#RASTER_DATA_PATH = "/mnt/win/data/image/GF1/GF1_PMS1_E116.1_N40.0_20151012_L1A0001094174/"
+    RASTER_DATA_PATH = "/mnt/win/data/BEIJING/l8_beijing/L8-OLI-123-032-20180408-LSR"
     imageid='L8-OLI-123-032-20180408-LSR'
+    
     raster_b6 = os.path.join(RASTER_DATA_PATH, imageid+'-B6.TIF')
     raster_b5 = os.path.join(RASTER_DATA_PATH, imageid+'-B5.TIF')
-    raster_b4 = os.path.join(RASTER_DATA_PATH, imageid+'-B4.TIF'')
+    raster_b4 = os.path.join(RASTER_DATA_PATH, imageid+'-B4.TIF')
     
-    seg_path='/tmp'
+
     seg_raster(raster_b6,raster_b5,raster_b4, imageid, seg_path )
     print("end")
