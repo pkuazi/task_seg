@@ -7,6 +7,7 @@ from skimage.segmentation import felzenszwalb
 
 import json
 import gjsonc
+from geotrans import GeomTrans
 
 #BLOCK_SIZE=256
 #OVERLAP_SIZE=13
@@ -23,15 +24,18 @@ if not os.path.exists(json_path):
 encode_dir='/tmp/encode'
 if not os.path.exists(encode_dir):
     os.makedirs(encode_dir)
+   
 
 def encode_json(t):
 #     f=open(geojson_file)
 #     t = json.loads(f.read())
+    crs_wkt = t['crs']['properties']['name']
     num_geom=len(t['features'])
     for i in range(num_geom):
         print(i)
-        geom = t['features'][i]['geometry']
-        geojs=gjsonc.trunc_geojson(geom,4)
+        geom = str(t['features'][i]['geometry'])
+        geom_wgs = GeomTrans(crs_wkt, 'EPSG:4326').transform_json(geom)
+        geojs=gjsonc.trunc_geojson(json.loads(geom_wgs),4)
         jstr = gjsonc.encode_geojson(geojs)
         t['features'][i]['geometry']=jstr
 #         ruku(t['features'][i])
@@ -213,10 +217,19 @@ def seg_raster(band1_file,band2_file,band3_file,imageid,seg_path):
             gt[3]=geotrans[3]+yoff*geotrans[5]
             
             subtask_list.append(imageid+str(i)+'_'+str(j))
-            minx_list.append(gt[0])
-            maxy_list.append(gt[3])
-            maxx_list.append(gt[0]+BLOCK_SIZE*geotrans[1])
-            miny_list.append(gt[3]+BLOCK_SIZE*geotrans[5])
+            
+            minx=gt[0]
+            maxy=gt[3]
+            maxx=gt[0]+BLOCK_SIZE*geotrans[1]
+            miny=gt[3]+BLOCK_SIZE*geotrans[5]
+            
+            minx_wgs, maxy_wgs = GeomTrans(proj, 'EPSG:4326').transform_point([minx,maxy])
+            maxx_wgs, miny_wgs = GeomTrans(proj, 'EPSG:4326').transform_point([maxx,miny])
+            
+            minx_list.append(minx_wgs)
+            maxy_list.append(maxy_wgs)
+            maxx_list.append(maxx_wgs)
+            miny_list.append(miny_wgs)
         
             print("start segmenting...")
             jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')
@@ -241,7 +254,7 @@ def seg_raster(band1_file,band2_file,band3_file,imageid,seg_path):
     bb["miny"]=miny_list      
 
     df=pd.DataFrame(bb)
-    df.to_csv('/tmp/subtask_bbox.csv')
+    df.to_csv('/tmp/subtask_bbox_wgs.csv')
 
 if __name__ == '__main__':
     print('start')#RASTER_DATA_PATH = "/mnt/win/data/image/GF1/GF1_PMS1_E116.1_N40.0_20151012_L1A0001094174/"
@@ -252,6 +265,5 @@ if __name__ == '__main__':
     raster_b5 = os.path.join(RASTER_DATA_PATH, imageid+'-B5.TIF')
     raster_b4 = os.path.join(RASTER_DATA_PATH, imageid+'-B4.TIF')
     
-
     seg_raster(raster_b6,raster_b5,raster_b4, imageid, seg_path )
     print("end")
