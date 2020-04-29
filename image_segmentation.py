@@ -157,13 +157,13 @@ def main():
     t = time.time()
     segments_felz = felzenszwalb_segment(img)
     t = time.time() - t
-    print t
+    print(t)
     arr2rst(segments_felz, '/tmp/f7_seg49.tif', proj, mask_transform)
 
     segments_class = segments_classify(img, segments_felz)
     import time
     t = time.time() - t
-    print t
+    print(t)
     # save to geotiff
     arr2rst(segments_class, '/tmp/f2_classified.tif', proj, mask_transform)
 
