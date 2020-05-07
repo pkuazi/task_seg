@@ -31,7 +31,7 @@ def read_raster(rasterfile):
     proj = dataset.GetProjection()
     geotrans = dataset.GetGeoTransform()
     noDataValue = band.GetNoDataValue()
-    print "Output file %s size:" % rasterfile, xsize, ysize
+    print("Output file %s size:" % rasterfile, xsize, ysize)
     rastervalue = band.ReadAsArray(xoff=0, yoff=0, win_xsize=xsize, win_ysize=ysize)
     rastervalue[rastervalue == noDataValue] = -9999
 

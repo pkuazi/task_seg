@@ -3,16 +3,18 @@ import os, sys
 
 from osgeo import gdal,ogr,osr
 from skimage import exposure
-from skimage.segmentation import felzenszwalb
+from skimage.segmentation import felzenszwalb,quickshift
 
 import json
 import gjsonc
 from geotrans import GeomTrans
+from pyxb.bundles.common.raw.xhtml1 import img
+# from ctypes.wintypes import RGB
 
-#BLOCK_SIZE=256
-#OVERLAP_SIZE=13
-BLOCK_SIZE=512
-OVERLAP_SIZE=25
+BLOCK_SIZE=256
+OVERLAP_SIZE=13
+# BLOCK_SIZE=512
+# OVERLAP_SIZE=5
 cluster_num=20
 
 seg_path="/tmp/seg/"
@@ -106,10 +108,8 @@ def polygonize(src_filename,dst_filename):
     dst_ds = None
     
     return dst_filename
-        
 
-def obia(band1,band2,band3, dst_file,proj, gt,jsonfile):
-
+def bands_stack(band1,band2,band3):
     bands_data = []
     bands_data.append(band1)
     bands_data.append(band2)
@@ -123,49 +123,58 @@ def obia(band1,band2,band3, dst_file,proj, gt,jsonfile):
         img = exposure.rescale_intensity(bands_data)
         rgb_img = np.dstack([img[:, :, 2], img[:, :, 1], img[:, :, 0]])
         print("tile size: ",rgb_img.shape)
-        segments = felzenszwalb(rgb_img, scale=85, sigma=0.25, min_size=9)
+    return rgb_img
 
-        labels = np.unique(segments)
-        X = []
-        Y = []
-        for l in labels:
-            Y.append(l)
-            mask = segments == l
-            feature = []
-            for i in range(3):
-                img_b = img[:, :, i]
-                feature.append(img_b[mask].mean())
-            X.append(feature)
-        from sklearn.cluster import KMeans
-        x = np.array(X)
-        print(x.shape)
-        try:
-            kmeans = KMeans(n_clusters=cluster_num, random_state=0).fit(x)
-            y_class_labels = kmeans.labels_
-            for s in range(len(Y)):
-                mask = segments == Y[s]
-                segments[mask] = y_class_labels[s]
-        except ValueError as e:
-            print("sample number is lower than cluster num")
-
-        xsize, ysize = segments.shape
-        dst_format = 'GTiff'
-        dst_nbands = 1
-        dst_datatype = gdal.GDT_Float32
-
-        driver = gdal.GetDriverByName(dst_format)
-        dst_ds = driver.Create(dst_file, ysize, xsize, dst_nbands, dst_datatype)
-        dst_ds.SetGeoTransform(gt)
-        dst_ds.SetProjection(proj)
-        dst_ds.GetRasterBand(1).WriteArray(segments)
-        dst_ds=None
- 
-        vector_file = polygonize(dst_file,jsonfile)
-#             cmd='gdal_polygonize.py %s -f GEOJSON  %s' % (dst_file,jsonfile)
-#             os.system(cmd)
-        return vector_file 
+def cluster_segments(img,segments):
+    labels = np.unique(segments)
+    X = []
+    Y = []
+    for l in labels:
+        Y.append(l)
+        mask = segments == l
+        feature = []
+        for i in range(3):
+            img_b = img[:, :, i]
+            feature.append(img_b[mask].mean())
+        X.append(feature)
+    from sklearn.cluster import KMeans
+    x = np.array(X)
+    print(x.shape)
+    try:
+        kmeans = KMeans(n_clusters=cluster_num, random_state=0).fit(x)
+        y_class_labels = kmeans.labels_
+        for s in range(len(Y)):
+            mask = segments == Y[s]
+            segments[mask] = y_class_labels[s]
+    except ValueError as e:
+        print("sample number is lower than cluster num")
+    return segments
     
-def seg_compositel_bands(rasterfile):
+
+def obia(rgb_img, dst_file,proj, gt,jsonfile,scale, sigma, min_size):
+#         segments = felzenszwalb(rgb_img, scale=85, sigma=0.25, min_size=9)
+    segments = felzenszwalb(rgb_img, scale, sigma, min_size)
+    return segments
+
+def segments_save_vec(gt, proj, segments,dst_file,jsonfile):
+    xsize, ysize = segments.shape
+    dst_format = 'GTiff'
+    dst_nbands = 1
+    dst_datatype = gdal.GDT_Float32
+    
+    driver = gdal.GetDriverByName(dst_format)
+    dst_ds = driver.Create(dst_file, ysize, xsize, dst_nbands, dst_datatype)
+    dst_ds.SetGeoTransform(gt)
+    dst_ds.SetProjection(proj)
+    dst_ds.GetRasterBand(1).WriteArray(segments)
+    dst_ds=None
+    
+    vector_file = polygonize(dst_file,jsonfile)
+    #             cmd='gdal_polygonize.py %s -f GEOJSON  %s' % (dst_file,jsonfile)
+    #             os.system(cmd)
+    return vector_file 
+    
+def seg_composite_bands(rasterfile,imageid):
     print('the image is :', rasterfile)
     dataset = gdal.Open(rasterfile)
     if dataset is None:
@@ -203,6 +212,8 @@ def seg_compositel_bands(rasterfile):
             band1[band1 == noDataValue] = -9999
             band2[band2 == noDataValue] = -9999
             band3[band3 == noDataValue] = -9999
+            
+            rgb_img = bands_stack(band1,band2,band3)
 
             dst_file=os.path.join(seg_path,imageid+str(i)+'_'+str(j)+'.tif')
             gt[0]=geotrans[0]+xoff*geotrans[1]
@@ -224,29 +235,35 @@ def seg_compositel_bands(rasterfile):
             miny_list.append(miny_wgs)
         
             print("start segmenting...")
-            jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')
-            json_file = obia(band1,band2,band3,dst_file,proj, gt,jsonfile)
             
-            if json_file is None:
-                continue
-            else:
-                f=open(json_file)
-                geojson = json.loads(f.read())
-                encode_gj= encode_json(geojson)
-                dir_file=os.path.join(encode_dir, imageid+str(i)+'_'+str(j)+'.geojson')
-                print(dir_file)    
-                with open(dir_file, 'w') as outfile:
-                    json.dump(encode_gj, outfile)
-                    
-    bb = {}
-    bb["subtaskname"]=subtask_list
-    bb["minx"]=minx_list
-    bb["maxy"]=maxy_list
-    bb["maxx"]=maxx_list
-    bb["miny"]=miny_list      
-
-    df=pd.DataFrame(bb)
-    df.to_csv('/tmp/subtask_bbox_wgs.csv')
+            segments = felzenszwalb(rgb_img, scale, sigma, min_size)
+            clustered = cluster_segments(segments)
+            
+            
+            jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')
+            json_file = segments_save_vec(clustered, dst_file,proj, gt,jsonfile)
+#             json_file = obia(rgb_img,dst_file,proj, gt,jsonfile)
+            
+#             if json_file is None:
+#                 continue
+#             else:
+#                 f=open(json_file)
+#                 geojson = json.loads(f.read())
+#                 encode_gj= encode_json(geojson)
+#                 dir_file=os.path.join(encode_dir, imageid+str(i)+'_'+str(j)+'.geojson')
+#                 print(dir_file)    
+#                 with open(dir_file, 'w') as outfile:
+#                     json.dump(encode_gj, outfile)
+#                     
+#     bb = {}
+#     bb["subtaskname"]=subtask_list
+#     bb["minx"]=minx_list
+#     bb["maxy"]=maxy_list
+#     bb["maxx"]=maxx_list
+#     bb["miny"]=miny_list      
+# 
+#     df=pd.DataFrame(bb)
+#     df.to_csv('/tmp/subtask_bbox_wgs.csv')
     
 def seg_individual_bands(band1_file,band2_file,band3_file,imageid):
     dataset1=gdal.Open(band1_file)
@@ -293,6 +310,8 @@ def seg_individual_bands(band1_file,band2_file,band3_file,imageid):
             band1[band1 == noDataValue] = -9999
             band2[band2 == noDataValue] = -9999
             band3[band3 == noDataValue] = -9999
+            
+            rgb_img = bands_stack(band1,band2,band3)
 
             dst_file=os.path.join(seg_path,imageid+str(i)+'_'+str(j)+'.tif')
             gt[0]=geotrans[0]+xoff*geotrans[1]
@@ -315,7 +334,7 @@ def seg_individual_bands(band1_file,band2_file,band3_file,imageid):
         
             print("start segmenting...")
             jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')
-            json_file = obia(band1,band2,band3,dst_file,proj, gt,jsonfile)
+            json_file = obia(rgb_img,dst_file,proj, gt,jsonfile)
             
             if json_file is None:
                 continue
@@ -338,14 +357,67 @@ def seg_individual_bands(band1_file,band2_file,band3_file,imageid):
     df=pd.DataFrame(bb)
     df.to_csv('/tmp/subtask_bbox_wgs.csv')
 
+def seg_specific_loc(rasterfile,imageid,i,j):
+    print('the image is :', rasterfile)
+    dataset = gdal.Open(rasterfile)
+    if dataset is None:
+        print("Failed to open file: " + rasterfile)
+        sys.exit(1)
+    band = dataset.GetRasterBand(1)
+    xsize = dataset.RasterXSize
+    ysize = dataset.RasterYSize
+    proj = dataset.GetProjection()
+    geotrans = dataset.GetGeoTransform()
+    gt=list(geotrans)
+    noDataValue = band.GetNoDataValue()
+    
+    rnum_tile=int((ysize-BLOCK_SIZE)/(BLOCK_SIZE-OVERLAP_SIZE))+1
+    cnum_tile=int((xsize-BLOCK_SIZE)/(BLOCK_SIZE-OVERLAP_SIZE))+1
+    if i<rnum_tile and j<cnum_tile:      
+        xoff=0+(BLOCK_SIZE-OVERLAP_SIZE)*j
+        yoff=0+(BLOCK_SIZE-OVERLAP_SIZE)*i
+        gt[0]=geotrans[0]+xoff*geotrans[1]
+        gt[3]=geotrans[3]+yoff*geotrans[5]
+        print("the row and column of tile is :", xoff, yoff)
+        tile=dataset.ReadAsArray(xoff, yoff, BLOCK_SIZE,BLOCK_SIZE)
+        print(tile.shape)
+        band1=tile[0]
+        band2=tile[1]
+        band3=tile[2]
+        band1[band1 == noDataValue] = -9999
+        band2[band2 == noDataValue] = -9999
+        band3[band3 == noDataValue] = -9999        
+    
+        dst_file=os.path.join(seg_path,imageid+str(i)+'_'+str(j)+'.tif')        
+        jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')
+        
+        image = bands_stack(band1,band2,band3)
+        segment_mask = felzenszwalb(image, scale=75, sigma=0.25, min_size=20)
+#         segment_mask = quickshift(image=image, ratio=0.1, kernel_size=2, max_dist=4, return_tree=False, sigma=0, convert2lab=True, random_seed=1)
+        segments=cluster_segments(image,segment_mask)
+        json_file = segments_save_vec(gt, proj, segments, dst_file, jsonfile)
+        
+    else:
+        print("the tile location is out of the image")
+        return
+            
+
 if __name__ == '__main__':
-    print('start')#RASTER_DATA_PATH = "/mnt/win/data/image/GF1/GF1_PMS1_E116.1_N40.0_20151012_L1A0001094174/"
-    RASTER_DATA_PATH = "/mnt/win/data/BEIJING/l8_beijing/L8-OLI-123-032-20180408-LSR"
-    imageid='L8-OLI-123-032-20180408-LSR'
+    print('start')
+#     RASTER_DATA_PATH = "/mnt/win/data/image/GF1/GF1_PMS1_E116.1_N40.0_20151012_L1A0001094174/"
+#     RASTER_DATA_PATH = "/mnt/win/data/BEIJING/l8_beijing/L8-OLI-123-032-20180408-LSR"
+#     imageid='L8-OLI-123-032-20180408-LSR'
+#     
+#     raster_b6 = os.path.join(RASTER_DATA_PATH, imageid+'-B6.TIF')
+#     raster_b5 = os.path.join(RASTER_DATA_PATH, imageid+'-B5.TIF')
+#     raster_b4 = os.path.join(RASTER_DATA_PATH, imageid+'-B4.TIF')
+#      
+#     seg_individual_bands(raster_b6,raster_b5,raster_b4, imageid )
     
-    raster_b6 = os.path.join(RASTER_DATA_PATH, imageid+'-B6.TIF')
-    raster_b5 = os.path.join(RASTER_DATA_PATH, imageid+'-B5.TIF')
-    raster_b4 = os.path.join(RASTER_DATA_PATH, imageid+'-B4.TIF')
+    data = '/root/Downloads/test/0.5m test.img'
+#     seg_composite_bands(data,'tr')
+#     scale=70
+
+    seg_specific_loc(data, 'tr', 3,17)
     
-    seg_individual_bands(raster_b6,raster_b5,raster_b4, imageid )
     print("end")

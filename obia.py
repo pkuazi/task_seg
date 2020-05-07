@@ -65,7 +65,7 @@ def obia_composite( cluster_num,rasterfile):
     rgb_img = np.dstack([img[:, :, 2], img[:, :, 1], img[:, :, 0]])
 
     segments = felzenszwalb(rgb_img, scale=85, sigma=0.25, min_size=9)
-
+    print('finish segment')
     labels = np.unique(segments)
     X = []
     Y = []
@@ -79,7 +79,7 @@ def obia_composite( cluster_num,rasterfile):
         X.append(feature)
     from sklearn.cluster import KMeans
     x = np.array(X)
-
+ 
     kmeans = KMeans(n_clusters=cluster_num, random_state=0).fit(x)
     y_class_labels = kmeans.labels_
     for s in range(len(Y)):
