@@ -156,7 +156,7 @@ def obia(rgb_img, dst_file,proj, gt,jsonfile,scale, sigma, min_size):
     segments = felzenszwalb(rgb_img, scale, sigma, min_size)
     return segments
 
-def segments_save_vec(gt, proj, segments,dst_file,jsonfile):
+def segments_to_vec(gt, proj, segments,dst_file,jsonfile):
     xsize, ysize = segments.shape
     dst_format = 'GTiff'
     dst_nbands = 1
@@ -255,15 +255,15 @@ def seg_composite_bands(rasterfile,imageid):
 #                 with open(dir_file, 'w') as outfile:
 #                     json.dump(encode_gj, outfile)
 #                     
-#     bb = {}
-#     bb["subtaskname"]=subtask_list
-#     bb["minx"]=minx_list
-#     bb["maxy"]=maxy_list
-#     bb["maxx"]=maxx_list
-#     bb["miny"]=miny_list      
-# 
-#     df=pd.DataFrame(bb)
-#     df.to_csv('/tmp/subtask_bbox_wgs.csv')
+    bb = {}
+    bb["subtaskname"]=subtask_list
+    bb["minx"]=minx_list
+    bb["maxy"]=maxy_list
+    bb["maxx"]=maxx_list
+    bb["miny"]=miny_list      
+ 
+    df=pd.DataFrame(bb)
+    df.to_csv('/tmp/subtask_bbox_wgs.csv')
     
 def seg_individual_bands(band1_file,band2_file,band3_file,imageid):
     dataset1=gdal.Open(band1_file)
@@ -357,7 +357,7 @@ def seg_individual_bands(band1_file,band2_file,band3_file,imageid):
     df=pd.DataFrame(bb)
     df.to_csv('/tmp/subtask_bbox_wgs.csv')
 
-def seg_specific_loc(rasterfile,imageid,i,j):
+def process_specific_tile(rasterfile,imageid,i,j):
     print('the image is :', rasterfile)
     dataset = gdal.Open(rasterfile)
     if dataset is None:
@@ -386,12 +386,12 @@ def seg_specific_loc(rasterfile,imageid,i,j):
         band3=tile[2]
         band1[band1 == noDataValue] = -9999
         band2[band2 == noDataValue] = -9999
-        band3[band3 == noDataValue] = -9999        
+        band3[band3 == noDataValue] = -9999  
+        
+        image = bands_stack(band1,band2,band3)      
     
         dst_file=os.path.join(seg_path,imageid+str(i)+'_'+str(j)+'.tif')        
-        jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')
-        
-        image = bands_stack(band1,band2,band3)
+        jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')        
         segment_mask = felzenszwalb(image, scale=75, sigma=0.25, min_size=20)
 #         segment_mask = quickshift(image=image, ratio=0.1, kernel_size=2, max_dist=4, return_tree=False, sigma=0, convert2lab=True, random_seed=1)
         segments=cluster_segments(image,segment_mask)
@@ -418,6 +418,6 @@ if __name__ == '__main__':
 #     seg_composite_bands(data,'tr')
 #     scale=70
 
-    seg_specific_loc(data, 'tr', 3,17)
+    seg_specific_tile(data, 'tr', 3,17)
     
     print("end")
