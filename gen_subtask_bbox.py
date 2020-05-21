@@ -1,3 +1,10 @@
+from osgeo import gdal, ogr
+import os
+from geotrans import GeomTrans
+
+BLOCK_SIZE=512
+OVERLAP_SIZE=0
+
 def gen_subtask_bbox(rasterfile,imageid):
     print('the image is :', rasterfile)
     dataset = gdal.Open(rasterfile)
@@ -55,8 +62,8 @@ def gen_subtask_bbox(rasterfile,imageid):
     bb["miny"]=miny_list      
  
     df=pd.DataFrame(bb)
-    df.to_csv('/tmp/subtask_bbox_wgs.csv')
+    df.to_csv('/tmp/subtask_512_bbox_wgs.csv')
 
 if __name__ == '__main__':   
-    task_data = '/tmp/sample_image/xiaoshan_2013.tif'
+    task_data = '/mnt/win/data/sample_image/xiaoshan_2013.tif'
     gen_subtask_bbox(task_data,'xiaoshan_2013')

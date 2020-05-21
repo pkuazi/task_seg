@@ -9,7 +9,10 @@ from skimage.segmentation import felzenszwalb
 
 
 RASTER_DATA_PATH = "/mnt/win/data/image/l8_beijing/"
-
+cluster_num=20
+scale=90
+sigma=0.1
+min_size=10
 
 def read_raster(rasterfile):
     dataset = gdal.OpenShared(rasterfile)
@@ -64,7 +67,7 @@ def obia_composite( cluster_num,rasterfile):
     img = exposure.rescale_intensity(bands_data)
     rgb_img = np.dstack([img[:, :, 2], img[:, :, 1], img[:, :, 0]])
 
-    segments = felzenszwalb(rgb_img, scale=85, sigma=0.25, min_size=9)
+    segments = felzenszwalb(rgb_img, scale, sigma, min_size)
     print('finish segment')
     labels = np.unique(segments)
     X = []
@@ -154,5 +157,5 @@ def obia( cluster_num):
 
 if __name__ == '__main__':
 #     obia( cluster_num=20)
-    data = '/tmp/0_8m/TRIPLESAT_1_PSH_L4_20190918022918_0025C1VI_069.img'
+    data = '/root/Downloads/trt2013.img'
     obia_composite(20, data)

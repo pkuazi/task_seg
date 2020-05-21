@@ -11,11 +11,14 @@ from geotrans import GeomTrans
 from pyxb.bundles.common.raw.xhtml1 import img
 # from ctypes.wintypes import RGB
 
-BLOCK_SIZE=256
-OVERLAP_SIZE=13
-# BLOCK_SIZE=512
-# OVERLAP_SIZE=5
+# BLOCK_SIZE=256
+# OVERLAP_SIZE=13
+BLOCK_SIZE=512
+OVERLAP_SIZE=5
 cluster_num=20
+scale=90
+sigma=0.1
+min_size=10
 
 seg_path="/tmp/seg/"
 if not os.path.exists(seg_path):
@@ -237,11 +240,12 @@ def seg_composite_bands(rasterfile,imageid):
             print("start segmenting...")
             
             segments = felzenszwalb(rgb_img, scale, sigma, min_size)
-            clustered = cluster_segments(segments)
+            clustered = cluster_segments(rgb_img,segments)
             
             
             jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')
-            json_file = segments_save_vec(clustered, dst_file,proj, gt,jsonfile)
+            json_file = segments_to_vec(gt, proj, clustered, dst_file,jsonfile)
+            
 #             json_file = obia(rgb_img,dst_file,proj, gt,jsonfile)
             
 #             if json_file is None:
@@ -392,10 +396,10 @@ def process_specific_tile(rasterfile,imageid,i,j):
     
         dst_file=os.path.join(seg_path,imageid+str(i)+'_'+str(j)+'.tif')        
         jsonfile = os.path.join(json_path, imageid+str(i)+'_'+str(j)+'.geojson')        
-        segment_mask = felzenszwalb(image, scale=75, sigma=0.25, min_size=20)
+        segment_mask = felzenszwalb(image, scale=90, sigma=0.1, min_size=10)
 #         segment_mask = quickshift(image=image, ratio=0.1, kernel_size=2, max_dist=4, return_tree=False, sigma=0, convert2lab=True, random_seed=1)
         segments=cluster_segments(image,segment_mask)
-        json_file = segments_save_vec(gt, proj, segments, dst_file, jsonfile)
+        json_file = segments_to_vec(gt, proj, segments, dst_file, jsonfile)
         
     else:
         print("the tile location is out of the image")
@@ -414,10 +418,10 @@ if __name__ == '__main__':
 #      
 #     seg_individual_bands(raster_b6,raster_b5,raster_b4, imageid )
     
-    data = '/root/Downloads/test/0.5m test.img'
-#     seg_composite_bands(data,'tr')
+    data = '/root/Downloads/trt2013.img'
+    seg_composite_bands(data,'trt')
 #     scale=70
 
-    seg_specific_tile(data, 'tr', 3,17)
+#     process_specific_tile(data, 'trt', 3,4)
     
     print("end")
